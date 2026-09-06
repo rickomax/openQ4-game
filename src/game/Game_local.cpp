@@ -716,6 +716,9 @@ void idGameLocal::Clear( void ) {
 	skipCinematic = false;
 	influenceActive = false;
 
+	coopPendingMapScripts.Clear();
+	coopMapScriptsStarted = false;
+
 	localClientNum = 0;
 	isMultiplayer = false;
 	isServer = false;
@@ -3893,6 +3896,12 @@ void idGameLocal::SpawnPlayer(int clientNum, bool isBot, const char* botName) {
 
 	PACIFIER_UPDATE;
 	mpGame.SpawnPlayer( clientNum );
+
+	// A campaign map's script threads were held until somebody was here to run
+	// them against. Somebody now is.
+	if ( IsCoop() ) {
+		StartPendingCoopMapScripts();
+	}
 }
 
 /*
@@ -9015,6 +9024,237 @@ idEntity* idGameLocal::SelectSpawnPoint( idPlayer* player ) {
 	int rnd = rvRandom::flrand( 0.0, 1.0 ) * (weightedSpawns.Num() / 2);
 	return weightedSpawns[ rnd ].ent;
 }
+/*
+===========
+idGameLocal::GetCampaignPlayers
+
+Campaign scripting was written against a single player: target entities and
+script events reach for GetLocalPlayer() and act on whatever comes back. That is
+right in single-player, silently wrong in co-op - a joining client is not the
+local player, so it receives none of it - and unsafe on a dedicated co-op
+server, which has no local player at all and where several of those call sites
+dereference the result without checking.
+
+Fills players with everyone a campaign effect should reach and returns how many.
+Outside co-op that is the local player alone, so single-player behaviour is
+exactly what it was.
+===========
+*/
+int idGameLocal::GetCampaignPlayers( idPlayer *players[ MAX_CLIENTS ] ) const {
+	int num = 0;
+
+	if ( !IsCoop() ) {
+		idPlayer *local = GetLocalPlayer();
+		if ( local ) {
+			players[ num++ ] = local;
+		}
+		return num;
+	}
+
+	for ( int i = 0; i < MAX_CLIENTS; i++ ) {
+		if ( !entities[ i ] || !entities[ i ]->IsType( idPlayer::GetClassType() ) ) {
+			continue;
+		}
+		players[ num++ ] = static_cast<idPlayer *>( entities[ i ] );
+	}
+
+	return num;
+}
+
+/*
+===========
+idGameLocal::GetCampaignActivator
+
+The player a campaign effect should use when it can only sensibly apply to one -
+because it spawns world items, or reads a position to measure against. In co-op
+that is whoever triggered it, falling back to any player present so a script
+fired by something other than a player still has someone to act on.
+===========
+*/
+idPlayer *idGameLocal::GetCampaignActivator( idEntity *activator ) const {
+	if ( IsCoop() ) {
+		if ( activator != NULL && activator->IsType( idPlayer::GetClassType() ) ) {
+			return static_cast<idPlayer *>( activator );
+		}
+
+		idPlayer *players[ MAX_CLIENTS ];
+		if ( GetCampaignPlayers( players ) > 0 ) {
+			return players[ 0 ];
+		}
+		return NULL;
+	}
+
+	return GetLocalPlayer();
+}
+
+/*
+===========
+idGameLocal::SendCoopCampaignEvent
+
+Campaign effects that live in a player's HUD cannot be applied to a remote
+player's entity here: the HUD they change belongs to that client. Send the
+effect instead, and apply it locally as well so a listen-server host - who
+receives no reliable message from itself - is not left out.
+===========
+*/
+void idGameLocal::SendCoopCampaignEvent( int eventType, const char *arg0, const char *arg1 ) {
+	if ( isClient ) {
+		return;
+	}
+
+	if ( IsCoop() && isServer ) {
+		idBitMsg	outMsg;
+		byte		msgBuf[ MAX_GAME_MESSAGE_SIZE ];
+
+		outMsg.Init( msgBuf, sizeof( msgBuf ) );
+		outMsg.BeginWriting();
+		outMsg.WriteByte( GAME_RELIABLE_MESSAGE_COOP_CAMPAIGN_EVENT );
+		outMsg.WriteByte( eventType );
+		outMsg.WriteByte( COOP_CAMPAIGN_PAYLOAD_STRINGS );
+		outMsg.WriteString( arg0 ? arg0 : "" );
+		outMsg.WriteString( arg1 ? arg1 : "" );
+		networkSystem->ServerSendReliableMessage( -1, outMsg );
+	}
+
+	ApplyCoopCampaignEvent( eventType, arg0, arg1 );
+}
+
+/*
+===========
+idGameLocal::SendCoopCampaignFade
+
+Campaign scripts fade the screen constantly - level openings, deaths, the beat
+before a cinematic. playerView belongs to the machine drawing it, so the fade
+has to be sent rather than written to a remote player's entity here.
+===========
+*/
+void idGameLocal::SendCoopCampaignFade( const idVec4 &fadeColor, int fadeTime ) {
+	if ( isClient ) {
+		return;
+	}
+
+	if ( IsCoop() && isServer ) {
+		idBitMsg	outMsg;
+		byte		msgBuf[ MAX_GAME_MESSAGE_SIZE ];
+
+		outMsg.Init( msgBuf, sizeof( msgBuf ) );
+		outMsg.BeginWriting();
+		outMsg.WriteByte( GAME_RELIABLE_MESSAGE_COOP_CAMPAIGN_EVENT );
+		outMsg.WriteByte( COOP_CAMPAIGN_EVENT_FADE );
+		outMsg.WriteByte( COOP_CAMPAIGN_PAYLOAD_FADE );
+		outMsg.WriteFloat( fadeColor[ 0 ] );
+		outMsg.WriteFloat( fadeColor[ 1 ] );
+		outMsg.WriteFloat( fadeColor[ 2 ] );
+		outMsg.WriteFloat( fadeColor[ 3 ] );
+		outMsg.WriteLong( fadeTime );
+		networkSystem->ServerSendReliableMessage( -1, outMsg );
+	}
+
+	ApplyCoopCampaignFade( fadeColor, fadeTime );
+}
+
+/*
+===========
+idGameLocal::ApplyCoopCampaignFade
+===========
+*/
+void idGameLocal::ApplyCoopCampaignFade( const idVec4 &fadeColor, int fadeTime ) {
+	idPlayer *player = GetLocalPlayer();
+	if ( player == NULL ) {
+		return;
+	}
+	player->playerView.Fade( fadeColor, fadeTime );
+}
+
+/*
+===========
+idGameLocal::ApplyCoopCampaignEvent
+
+Applies a campaign effect to this machine's own player. Runs on every client and
+on a listen-server host; a dedicated server has no local player and does nothing.
+===========
+*/
+void idGameLocal::ApplyCoopCampaignEvent( int eventType, const char *arg0, const char *arg1 ) {
+	idPlayer *player = GetLocalPlayer();
+	if ( player == NULL ) {
+		return;
+	}
+
+	switch ( eventType ) {
+		case COOP_CAMPAIGN_EVENT_OBJECTIVE:
+			if ( player->objectiveSystem ) {
+				player->objectiveSystem->SetStateString( "missionobjective", arg0 ? arg0 : "" );
+			}
+			break;
+
+		case COOP_CAMPAIGN_EVENT_SECRET_AREA:
+			player->DiscoverSecretArea( arg0 ? arg0 : "" );
+			break;
+
+		case COOP_CAMPAIGN_EVENT_TIP:
+			player->ShowTip( arg0 ? arg0 : "", arg1 ? arg1 : "", false );
+			break;
+
+		case COOP_CAMPAIGN_EVENT_TIP_OFF:
+			player->HideTip();
+			break;
+
+		default:
+			Warning( "ApplyCoopCampaignEvent: unknown campaign event %d", eventType );
+			break;
+	}
+}
+
+/*
+===========
+idGameLocal::QueueCoopMapScript
+
+idWorldspawn::Spawn starts a campaign map's script threads on the frame after
+the map loads. In co-op nobody has connected by then - on a dedicated server
+nobody may have connected at all - and campaign scripts open by reaching for the
+player. Hold the thread until there is one.
+===========
+*/
+void idGameLocal::QueueCoopMapScript( const function_t *func ) {
+	if ( func == NULL ) {
+		return;
+	}
+	coopPendingMapScripts.Append( func );
+}
+
+/*
+===========
+idGameLocal::StartPendingCoopMapScripts
+
+Releases the map scripts held by QueueCoopMapScript, once, as soon as a player
+exists to run them against.
+===========
+*/
+void idGameLocal::StartPendingCoopMapScripts( void ) {
+	if ( coopMapScriptsStarted || coopPendingMapScripts.Num() == 0 ) {
+		return;
+	}
+
+	idPlayer *players[ MAX_CLIENTS ];
+	if ( GetCampaignPlayers( players ) == 0 ) {
+		return;
+	}
+
+	coopMapScriptsStarted = true;
+
+	// Take a copy first: starting a thread can spawn entities, and an entity
+	// spawned from one of these scripts could reach back into the list.
+	idList<const function_t *> pending = coopPendingMapScripts;
+	coopPendingMapScripts.Clear();
+
+	for ( int i = 0; i < pending.Num(); i++ ) {
+		idThread *thread = new idThread( pending[ i ] );
+		thread->DelayedStart( 0 );
+	}
+
+	Printf( "co-op: started %d held map script thread(s)\n", pending.Num() );
+}
+
 /*
 ===========
 idGameLocal::FindCoopSpawnPosition

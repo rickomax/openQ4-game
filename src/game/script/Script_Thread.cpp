@@ -1174,7 +1174,7 @@ idThread::Event_Trigger
 void idThread::Event_Trigger( idEntity *ent ) {
 	if ( ent ) {
 		ent->Signal( SIG_TRIGGER );
-		ent->ProcessEvent( &EV_Activate, gameLocal.GetLocalPlayer() );
+		ent->ProcessEvent( &EV_Activate, gameLocal.GetCampaignActivator( NULL ) );
 		ent->TriggerGuis();
 	}
 }
@@ -1770,14 +1770,11 @@ idThread::Event_FadeIn
 ================
 */
 void idThread::Event_FadeIn( idVec3 &color, float time ) {
-	idVec4		fadeColor;
-	idPlayer	*player;
+	idVec4 fadeColor;
 
-	player = gameLocal.GetLocalPlayer();
-	if ( player ) {
-		fadeColor.Set( color[ 0 ], color[ 1 ], color[ 2 ], 0.0f );
-		player->playerView.Fade(fadeColor, SEC2MS( time ) );
-	}
+	fadeColor.Set( color[ 0 ], color[ 1 ], color[ 2 ], 0.0f );
+	// Every co-op player sees the fade the script asked for, not just the host.
+	gameLocal.SendCoopCampaignFade( fadeColor, SEC2MS( time ) );
 }
 
 /*
@@ -1786,14 +1783,11 @@ idThread::Event_FadeOut
 ================
 */
 void idThread::Event_FadeOut( idVec3 &color, float time ) {
-	idVec4		fadeColor;
-	idPlayer	*player;
+	idVec4 fadeColor;
 
-	player = gameLocal.GetLocalPlayer();
-	if ( player ) {
-		fadeColor.Set( color[ 0 ], color[ 1 ], color[ 2 ], 1.0f );
-		player->playerView.Fade(fadeColor, SEC2MS( time ) );
-	}
+	fadeColor.Set( color[ 0 ], color[ 1 ], color[ 2 ], 1.0f );
+	// Every co-op player sees the fade the script asked for, not just the host.
+	gameLocal.SendCoopCampaignFade( fadeColor, SEC2MS( time ) );
 }
 
 /*
@@ -1802,14 +1796,10 @@ idThread::Event_FadeTo
 ================
 */
 void idThread::Event_FadeTo( idVec3 &color, float alpha, float time ) {
-	idVec4		fadeColor;
-	idPlayer	*player;
+	idVec4 fadeColor;
 
-	player = gameLocal.GetLocalPlayer();
-	if ( player ) {
-		fadeColor.Set( color[ 0 ], color[ 1 ], color[ 2 ], alpha );
-		player->playerView.Fade(fadeColor, SEC2MS( time ) );
-	}
+	fadeColor.Set( color[ 0 ], color[ 1 ], color[ 2 ], alpha );
+	gameLocal.SendCoopCampaignFade( fadeColor, SEC2MS( time ) );
 }
 
 /*
@@ -2068,7 +2058,13 @@ idThread::Event_DrawText
 ================
 */
 void idThread::Event_DrawText( const char *text, const idVec3 &origin, float scale, const idVec3 &color, const int align, const float lifetime ) {
-	gameRenderWorld->DrawText( text, origin, scale, idVec4( color.x, color.y, color.z, 0.0f ), gameLocal.GetLocalPlayer()->viewAngles.ToMat3(), align, SEC2MS( lifetime ) );
+	// Debug text is drawn facing whoever is looking at it, so it needs a local
+	// player; a dedicated server has none.
+	idPlayer *player = gameLocal.GetLocalPlayer();
+	if ( !player ) {
+		return;
+	}
+	gameRenderWorld->DrawText( text, origin, scale, idVec4( color.x, color.y, color.z, 0.0f ), player->viewAngles.ToMat3(), align, SEC2MS( lifetime ) );
 }
 
 /*

@@ -619,7 +619,19 @@ idTarget_Give::Event_PostSpawn
 ================
 */
 void idTarget_Give::Event_PostSpawn() {
-	ProcessEvent( &EV_Activate, gameLocal.GetLocalPlayer() );
+	// In co-op the map finishes loading before anyone has spawned, so a starting
+	// loadout fired here would be handed to nobody. Wait for a player; this stops
+	// as soon as one exists, and costs one event per half second on an empty
+	// dedicated server until then.
+	if ( gameLocal.IsCoop() ) {
+		idPlayer *players[ MAX_CLIENTS ];
+		if ( gameLocal.GetCampaignPlayers( players ) == 0 ) {
+			PostEventMS( &EV_PostSpawn, 500 );
+			return;
+		}
+	}
+
+	ProcessEvent( &EV_Activate, gameLocal.GetCampaignActivator( NULL ) );
 }
 // RAVEN END
 
@@ -635,8 +647,14 @@ void idTarget_Give::Event_Activate( idEntity *activator ) {
 	}
 
 	static int giveNum = 0;
-	idPlayer *player = gameLocal.GetLocalPlayer();
-	if ( player ) {
+
+	// A campaign "give" is progression, not a pickup that belongs to whoever
+	// walked into it, so in co-op every player receives it.
+	idPlayer *players[ MAX_CLIENTS ];
+	const int numPlayers = gameLocal.GetCampaignPlayers( players );
+
+	for ( int playerIndex = 0; playerIndex < numPlayers; playerIndex++ ) {
+		idPlayer *player = players[ playerIndex ];
 		const bool quietStartupGive = spawnArgs.GetBool( "onSpawn" ) || player->IsApplyingStartupLoadout();
 		const idKeyValue *kv = spawnArgs.MatchPrefix( "item", NULL );
 		while ( kv ) {
@@ -656,7 +674,7 @@ void idTarget_Give::Event_Activate( idEntity *activator ) {
 
 					// rules are that if we are given a weapon by a character, we are supposed to switch to it regardless of
 					//	whether auto-switch is on or not.
-					if ( !quietStartupGive && !gameLocal.isMultiplayer && !player->GetUserInfo()->GetBool( "ui_autoSwitch" ) && !spawnArgs.GetBool( "onSpawn" )) {
+					if ( !quietStartupGive && !gameLocal.IsMatchGameType() && !player->GetUserInfo()->GetBool( "ui_autoSwitch" ) && !spawnArgs.GetBool( "onSpawn" )) {
 						const idKeyValue *kv = ent->spawnArgs.FindKey( "weaponclass" );
 						if ( kv ) {
 							// does player already have this weapon selected?
@@ -1470,10 +1488,11 @@ idTarget_SetPrimaryObjective::Event_Activate
 ================
 */
 void idTarget_SetPrimaryObjective::Event_Activate( idEntity *activator ) {
-	idPlayer *player = gameLocal.GetLocalPlayer();
-	if ( player && player->objectiveSystem ) {
-		player->objectiveSystem->SetStateString( "missionobjective", spawnArgs.GetString( "text", common->GetLocalizedString( "#str_104253" ) ) );
-	}
+	// The objective panel is client-side presentation, so every co-op player has
+	// to be told rather than have their entity written to here.
+	gameLocal.SendCoopCampaignEvent(
+		COOP_CAMPAIGN_EVENT_OBJECTIVE,
+		spawnArgs.GetString( "text", common->GetLocalizedString( "#str_104253" ) ) );
 }
 
 // RAVEN BEGIN
@@ -1522,10 +1541,10 @@ rvTarget_SecretArea::Event_Activate
 ================
 */
 void rvTarget_SecretArea::Event_Activate( idEntity *activator ) {
-	idPlayer *player = gameLocal.GetLocalPlayer();
-	if ( player ) { 
-		player->DiscoverSecretArea( spawnArgs.GetString ( "description" ));
-	}
+	// A secret is found for the whole party, not just whoever walked into it.
+	gameLocal.SendCoopCampaignEvent(
+		COOP_CAMPAIGN_EVENT_SECRET_AREA,
+		spawnArgs.GetString( "description" ) );
 }
 
 /*
@@ -1780,7 +1799,13 @@ void rvTarget_AmmoStash::Event_Activate( idEntity *activator )	{
 	idDict				args;
 
 
-	player = gameLocal.GetLocalPlayer();
+	// This spawns ammo into the world sized to one player's needs, so it uses
+	// whoever triggered it rather than every player. It was an unchecked
+	// GetLocalPlayer(), which is NULL on a dedicated server.
+	player = gameLocal.GetCampaignActivator( activator );
+	if ( !player ) {
+		return;
+	}
 
 	//set up the array
 	memset( AmmoArray, 0, sizeof( ammodata_t) * AMMO_ARRAY_SIZE);
@@ -2125,7 +2150,9 @@ idTarget_Tip::Event_Activate
 ================
 */
 void idTarget_Tip::Event_GetPlayerPos( void ) {
-	idPlayer *player = gameLocal.GetLocalPlayer();
+	// In co-op this anchors on whoever the tip was raised for; the poll below
+	// then waits for the whole party to leave that spot.
+	idPlayer *player = gameLocal.GetCampaignActivator( NULL );
 	if ( player ) {
 		playerPos = player->GetPhysics()->GetOrigin();
 		PostEventMS( &EV_TipOff, 100 );
@@ -2138,15 +2165,24 @@ idTarget_Tip::Event_Activate
 ================
 */
 void idTarget_Tip::Event_Activate( idEntity *activator ) {
-	idPlayer *player = gameLocal.GetLocalPlayer();
-	if ( player ) {
-		if ( player->IsTipVisible() ) {
-			PostEventSec( &EV_Activate, 5.1f, activator );
-			return;
-		}
-		player->ShowTip( spawnArgs.GetString( "text_title" ), spawnArgs.GetString( "text_tip" ), false );
-		PostEventMS( &EV_GetPlayerPos, 2000 );
+	// Tip visibility is client-side state, so only a locally present player can
+	// be asked. A dedicated co-op server has none and simply raises the tip.
+	idPlayer *local = gameLocal.GetLocalPlayer();
+	if ( local && local->IsTipVisible() ) {
+		PostEventSec( &EV_Activate, 5.1f, activator );
+		return;
 	}
+
+	if ( gameLocal.GetCampaignActivator( activator ) == NULL ) {
+		// Nobody to raise it for yet.
+		return;
+	}
+
+	gameLocal.SendCoopCampaignEvent(
+		COOP_CAMPAIGN_EVENT_TIP,
+		spawnArgs.GetString( "text_title" ),
+		spawnArgs.GetString( "text_tip" ) );
+	PostEventMS( &EV_GetPlayerPos, 2000 );
 }
 
 /*
@@ -2155,15 +2191,23 @@ idTarget_Tip::Event_TipOff
 ================
 */
 void idTarget_Tip::Event_TipOff( void ) {
-	idPlayer *player = gameLocal.GetLocalPlayer();
-	if ( player ) {
-		idVec3 v = player->GetPhysics()->GetOrigin() - playerPos;
-		if ( v.Length() > 96.0f ) {
-			player->HideTip();
-		} else {
+	idPlayer *players[ MAX_CLIENTS ];
+	const int numPlayers = gameLocal.GetCampaignPlayers( players );
+	if ( numPlayers == 0 ) {
+		return;
+	}
+
+	// The tip comes down once everyone has left the spot it was raised at. With
+	// one player that is exactly the original "the player walked away" test.
+	for ( int i = 0; i < numPlayers; i++ ) {
+		const idVec3 v = players[ i ]->GetPhysics()->GetOrigin() - playerPos;
+		if ( v.Length() <= 96.0f ) {
 			PostEventMS( &EV_TipOff, 100 );
+			return;
 		}
 	}
+
+	gameLocal.SendCoopCampaignEvent( COOP_CAMPAIGN_EVENT_TIP_OFF );
 }
 
 

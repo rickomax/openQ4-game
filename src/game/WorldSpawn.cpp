@@ -45,8 +45,15 @@ void idWorldspawn::Spawn( void ) {
 		// call the main function by default
 		func = gameLocal.program.FindFunction( "main" );
 		if ( func != NULL ) {
-			thread = new idThread( func );
-			thread->DelayedStart( 0 );
+			// In co-op nobody has spawned yet - on a dedicated server nobody has
+			// even connected - and campaign scripts open by reaching for the
+			// player. Hold the thread until there is one to run it against.
+			if ( gameLocal.IsCoop() ) {
+				gameLocal.QueueCoopMapScript( func );
+			} else {
+				thread = new idThread( func );
+				thread->DelayedStart( 0 );
+			}
 		}
 	}
 
@@ -58,8 +65,12 @@ void idWorldspawn::Spawn( void ) {
 			gameLocal.Error( "Function '%s' not found in script for '%s' key on worldspawn", kv->GetValue().c_str(), kv->GetKey().c_str() );
 		}
 
-		thread = new idThread( func );
-		thread->DelayedStart( 0 );
+		if ( gameLocal.IsCoop() ) {
+			gameLocal.QueueCoopMapScript( func );
+		} else {
+			thread = new idThread( func );
+			thread->DelayedStart( 0 );
+		}
 		kv = spawnArgs.MatchPrefix( "call", kv );
 	}
 }

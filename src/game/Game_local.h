@@ -276,7 +276,34 @@ enum {
 	GAME_RELIABLE_MESSAGE_CHEAT_GOD,
 	GAME_RELIABLE_MESSAGE_CHEAT_NOCLIP
 // RAVEN END	
+	// openQ4 co-op: carries a campaign script effect that lives in a player's own
+	// HUD, which exists only on that player's machine. Appended last so every
+	// existing message keeps the ordinal it already sends over the wire.
+	,
+	GAME_RELIABLE_MESSAGE_COOP_CAMPAIGN_EVENT
 };
+
+// openQ4 co-op: campaign script effects that cannot simply be applied to a
+// remote player's entity on the server, because what they change - objective
+// text, the tip overlay - is client-side presentation owned by that client.
+typedef enum {
+	COOP_CAMPAIGN_EVENT_OBJECTIVE,		// primary objective text
+	COOP_CAMPAIGN_EVENT_SECRET_AREA,	// secret area discovered
+	COOP_CAMPAIGN_EVENT_TIP,			// show an on-screen tip
+	COOP_CAMPAIGN_EVENT_TIP_OFF,		// hide the on-screen tip
+	COOP_CAMPAIGN_EVENT_FADE,			// screen fade driven by a script
+	NUM_COOP_CAMPAIGN_EVENTS
+} coopCampaignEvent_t;
+
+// Payload shape of a co-op campaign event, sent ahead of the payload itself so
+// a receiver reads the message by shape and only then decides whether it knows
+// the event type. An event type added by a newer server is therefore ignored
+// cleanly instead of being misread.
+typedef enum {
+	COOP_CAMPAIGN_PAYLOAD_STRINGS,		// two strings
+	COOP_CAMPAIGN_PAYLOAD_FADE,			// rgba colour plus duration in msec
+	NUM_COOP_CAMPAIGN_PAYLOADS
+} coopCampaignPayload_t;
 
 enum {
 	GAME_UNRELIABLE_MESSAGE_EVENT,
@@ -521,6 +548,11 @@ public:
 	idList<rvGravityArea*>	gravityInfo;			// area num for each gravity zone
 	idList< idEntityPtr<idEntity> > scriptObjectProxies;
 // RAVEN END
+
+	// openQ4 co-op: campaign map scripts worldspawn started before any player
+	// existed, and whether they have since been released.
+	idList<const function_t *>	coopPendingMapScripts;
+	bool					coopMapScriptsStarted;
 
 	gameType_t				gameType;
 	bool					isMultiplayer;			// set if the game is run in multiplayer mode
@@ -1065,6 +1097,19 @@ public:
 	bool					IsMatchGameType( void ) const { return isMultiplayer && !IsCoop(); }
 	// Spreads co-op players around a shared campaign spawn spot.
 	bool					FindCoopSpawnPosition( idPlayer* player, idVec3 &origin );
+
+	// Campaign scripting was written against one player. These answer "who does
+	// a campaign effect reach" for the two shapes that question takes.
+	int						GetCampaignPlayers( idPlayer *players[ MAX_CLIENTS ] ) const;
+	idPlayer *				GetCampaignActivator( idEntity *activator ) const;
+	void					SendCoopCampaignEvent( int eventType, const char *arg0 = NULL, const char *arg1 = NULL );
+	void					SendCoopCampaignFade( const idVec4 &fadeColor, int fadeTime );
+	void					ApplyCoopCampaignEvent( int eventType, const char *arg0, const char *arg1 );
+	void					ApplyCoopCampaignFade( const idVec4 &fadeColor, int fadeTime );
+
+	// Campaign map scripts are held until a player exists to run them against.
+	void					QueueCoopMapScript( const function_t *func );
+	void					StartPendingCoopMapScripts( void );
 
 	bool					IsFlagGameType( void ) { return ( gameType == GAME_CTF || gameType == GAME_1F_CTF || gameType == GAME_ARENA_CTF || gameType == GAME_ARENA_1F_CTF ); }
 	bool					IsTeamGameType( void ) { return ( gameType == GAME_TDM || gameType == GAME_CTF || gameType == GAME_ARENA_CTF || gameType == GAME_DEADZONE ); }

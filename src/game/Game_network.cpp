@@ -2134,6 +2134,48 @@ void idGameLocal::ClientProcessReliableMessage( int clientNum, const idBitMsg &m
 			mpGame.PrintMessage( -1, str );
 			break;
 		}
+		// openQ4 co-op: a campaign script effect that belongs to this client's
+		// own HUD, which the server cannot reach into.
+		case GAME_RELIABLE_MESSAGE_COOP_CAMPAIGN_EVENT: {
+			const int eventType = msg.ReadByte();
+			const int payloadKind = msg.ReadByte();
+
+			// Read by payload shape first. An event type a newer server added is
+			// then ignored cleanly rather than misread, as long as it reuses a
+			// payload shape this build knows.
+			switch ( payloadKind ) {
+				case COOP_CAMPAIGN_PAYLOAD_STRINGS: {
+					char arg0[ MAX_STRING_CHARS ] = { '\0' };
+					char arg1[ MAX_STRING_CHARS ] = { '\0' };
+					msg.ReadString( arg0, sizeof( arg0 ) );
+					msg.ReadString( arg1, sizeof( arg1 ) );
+					if ( eventType < 0 || eventType >= NUM_COOP_CAMPAIGN_EVENTS ) {
+						common->DPrintf( "ignoring unknown co-op campaign event %d\n", eventType );
+						break;
+					}
+					ApplyCoopCampaignEvent( eventType, arg0, arg1 );
+					break;
+				}
+				case COOP_CAMPAIGN_PAYLOAD_FADE: {
+					idVec4 fadeColor;
+					fadeColor[ 0 ] = msg.ReadFloat();
+					fadeColor[ 1 ] = msg.ReadFloat();
+					fadeColor[ 2 ] = msg.ReadFloat();
+					fadeColor[ 3 ] = msg.ReadFloat();
+					const int fadeTime = msg.ReadLong();
+					if ( eventType != COOP_CAMPAIGN_EVENT_FADE ) {
+						common->DPrintf( "ignoring unknown co-op campaign event %d\n", eventType );
+						break;
+					}
+					ApplyCoopCampaignFade( fadeColor, fadeTime );
+					break;
+				}
+				default:
+					common->DPrintf( "ignoring co-op campaign event %d with unknown payload %d\n", eventType, payloadKind );
+					break;
+			}
+			break;
+		}
 // RAVEN BEGIN
 // shouchard:  multifield vote stuff
 		case GAME_RELIABLE_MESSAGE_STARTPACKEDVOTE: {
