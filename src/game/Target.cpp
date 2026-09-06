@@ -958,16 +958,20 @@ idTarget_SetInfluence::Event_Flash
 ================
 */
 void idTarget_SetInfluence::Event_Flash( float flash, int out ) {
-	idPlayer *player = gameLocal.GetLocalPlayer();
-	player->playerView.Fade( idVec4( 1, 1, 1, 1 ), flash );
-	const idSoundShader *shader = NULL;
-	if ( !out && flashInSound.Length() ){
-		shader = declManager->FindSound( flashInSound );
-		player->StartSoundShader( shader, SND_CHANNEL_VOICE, 0, false, NULL );
+	// The white flash and the sound that goes with it are what every player sees
+	// and hears, so both are sent rather than applied to the host alone.
+	gameLocal.SendCoopCampaignFade( idVec4( 1, 1, 1, 1 ), flash );
+
+	idStr soundName;
+	if ( !out && flashInSound.Length() ) {
+		soundName = flashInSound;
 	} else if ( out && ( flashOutSound.Length() || flashInSound.Length() ) ) {
-		shader = declManager->FindSound( flashOutSound.Length() ? flashOutSound : flashInSound );
-		player->StartSoundShader( shader, SND_CHANNEL_VOICE, 0, false, NULL );
+		soundName = flashOutSound.Length() ? flashOutSound : flashInSound;
 	}
+	if ( soundName.Length() ) {
+		gameLocal.SendCoopCampaignEvent( COOP_CAMPAIGN_EVENT_INFLUENCE_SOUND, soundName.c_str() );
+	}
+
 	PostEventSec( &EV_ClearFlash, flash, flash );
 }
 
@@ -978,8 +982,7 @@ idTarget_SetInfluence::Event_ClearFlash
 ================
 */
 void idTarget_SetInfluence::Event_ClearFlash( float flash ) {
-	idPlayer *player = gameLocal.GetLocalPlayer();
-	player->playerView.Fade( vec4_zero , flash );		
+	gameLocal.SendCoopCampaignFade( vec4_zero, flash );		
 }
 /*
 ================
@@ -1063,12 +1066,12 @@ void idTarget_SetInfluence::Event_Activate( idEntity *activator ) {
 	idSound *sound;
 	idStaticEntity *generic;
 	const char *parm;
-	const char *skin;
 	bool update;
 	idVec3 color;
 	idVec4 colorTo;
 	idPlayer *player;
 
+	// Only used for the default fov below now; a dedicated co-op server has none.
 	player = gameLocal.GetLocalPlayer();
 
 	if ( spawnArgs.GetBool( "triggerActivate" ) ) {
@@ -1117,15 +1120,35 @@ void idTarget_SetInfluence::Event_Activate( idEntity *activator ) {
 // mekberg: allow for initial fov and both fovs.
 	int fov = spawnArgs.GetInt( "fov" );
 	int fovInitial = spawnArgs.GetInt( "fov_initial" );
+	const int fovDuration = SEC2MS( spawnArgs.GetFloat( "fovTime" ) );
+	const float defaultFov = player ? player->DefaultFov() : g_fov.GetFloat();
+	bool hasFovCurve = true;
+	float fovStart = defaultFov;
+	float fovEnd = defaultFov;
+
 	if ( fov && fovInitial) {
-		fovSetting.Init( gameLocal.time, SEC2MS( spawnArgs.GetFloat( "fovTime" ) ), fovInitial, fov );
-		BecomeActive( TH_THINK );
+		fovStart = fovInitial;
+		fovEnd = fov;
 	} else if ( fov ) {
-		fovSetting.Init( gameLocal.time, SEC2MS( spawnArgs.GetFloat( "fovTime" ) ), player->DefaultFov(), fov );
-		BecomeActive( TH_THINK );
+		fovStart = defaultFov;
+		fovEnd = fov;
 	} else if ( fovInitial ) {
-		fovSetting.Init( gameLocal.time, SEC2MS( spawnArgs.GetFloat( "fovTime" ) ), fovInitial, player->DefaultFov() );
-		BecomeActive( TH_THINK );
+		fovStart = fovInitial;
+		fovEnd = defaultFov;
+	} else {
+		hasFovCurve = false;
+	}
+
+	if ( hasFovCurve ) {
+		if ( gameLocal.IsCoop() ) {
+			// This entity's Think does not run on a client, so every player is
+			// handed the curve and evaluates it, host included.
+			gameLocal.SendCoopCampaignInfluenceFov( gameLocal.time, fovDuration, fovStart, fovEnd,
+				spawnArgs.GetBool( "leaveFOV" ) );
+		} else {
+			fovSetting.Init( gameLocal.time, fovDuration, fovStart, fovEnd );
+			BecomeActive( TH_THINK );
+		}
 	}
 // RAVEN END
 
@@ -1199,20 +1222,25 @@ void idTarget_SetInfluence::Event_Activate( idEntity *activator ) {
 	
 	}
 
-	player->SetInfluenceLevel( spawnArgs.GetInt( "influenceLevel" ) );
+	// An influence rewrites what a player sees, and all of that lives on the
+	// player's own machine, so it is sent as one message rather than written to
+	// the host's entity alone.
+	coopInfluenceState_t influence;
+	influence.level = spawnArgs.GetInt( "influenceLevel" );
+	influence.setVision = spawnArgs.GetBool( "effect_vision" );
+	influence.visionRadius = spawnArgs.GetInt( "visionRadius" );
+	influence.visionEntitySpawnId = PackEntitySpawnId( gameLocal.spawnIds[ entityNumber ], entityNumber );
 
-	int snapAngle = spawnArgs.GetInt( "snapAngle" );
-	if ( snapAngle ) {
-		idAngles ang( 0, snapAngle, 0 );
-		player->SetViewAngles( ang );
-		player->SetAngles( ang );
+	const int snapAngle = spawnArgs.GetInt( "snapAngle" );
+	influence.snapAngle = ( snapAngle != 0 );
+	influence.snapYaw = snapAngle;
+
+	if ( influence.setVision ) {
+		influence.visionMaterial = spawnArgs.GetString( "mtrVision" );
+		influence.visionSkin = spawnArgs.GetString( "skinVision" );
 	}
 
-	if ( spawnArgs.GetBool( "effect_vision" ) ) {
-		parm = spawnArgs.GetString( "mtrVision" );
-		skin = spawnArgs.GetString( "skinVision" );
-		player->SetInfluenceView( parm, skin, spawnArgs.GetInt( "visionRadius" ), this ); 
-	}
+	gameLocal.SendCoopCampaignInfluence( influence );
 
 	parm = spawnArgs.GetString( "mtrWorld" );
 	if ( parm && *parm ) {
@@ -1231,7 +1259,13 @@ idTarget_SetInfluence::Think
 */
 void idTarget_SetInfluence::Think( void ) {
 	if ( thinkFlags & TH_THINK ) {
+		// Co-op never activates this think - every player evaluates the curve
+		// itself - and a dedicated server has no local player to drive.
 		idPlayer *player = gameLocal.GetLocalPlayer();
+		if ( !player ) {
+			BecomeInactive( TH_THINK );
+			return;
+		}
 		player->SetInfluenceFov( fovSetting.GetCurrentValue( gameLocal.time ) );
 		if ( fovSetting.IsDone( gameLocal.time ) ) {
 			if ( !spawnArgs.GetBool( "leaveFOV" ) ) {
@@ -1327,10 +1361,20 @@ void idTarget_SetInfluence::Event_RestoreInfluence() {
 		}
 	}
 
-	idPlayer *player = gameLocal.GetLocalPlayer();
-	player->SetInfluenceLevel( 0 );
-	player->SetInfluenceView( NULL, NULL, 0.0f, NULL );
-	player->SetInfluenceFov( 0 );
+	// Clearing an influence is the same message with nothing set, so a client
+	// that took the influence takes its removal by the same route.
+	coopInfluenceState_t influence;
+	influence.level = 0;
+	influence.setVision = true;
+	influence.visionRadius = 0.0f;
+	influence.visionEntitySpawnId = 0;
+	influence.snapAngle = false;
+	influence.snapYaw = 0.0f;
+	gameLocal.SendCoopCampaignInfluence( influence );
+
+	// A zero-length curve resolves to "fov 0" on the frame it arrives.
+	gameLocal.SendCoopCampaignInfluenceFov( gameLocal.time, 0, 0.0f, 0.0f, false );
+
 	gameLocal.SetGlobalMaterial( NULL );
 	float fadeTime = spawnArgs.GetFloat( "fadeWorldSounds" );
 	if ( fadeTime ) {
@@ -1447,7 +1491,18 @@ void idTarget_SetFov::Event_Activate( idEntity *activator ) {
 	cinematic = true;
 
 	idPlayer *player = gameLocal.GetLocalPlayer();
-	fovSetting.Init( gameLocal.time, SEC2MS( spawnArgs.GetFloat( "time" ) ), player ? player->DefaultFov() : g_fov.GetFloat(), spawnArgs.GetFloat( "fov" ) );
+	const int duration = SEC2MS( spawnArgs.GetFloat( "time" ) );
+	const float startFov = player ? player->DefaultFov() : g_fov.GetFloat();
+	const float endFov = spawnArgs.GetFloat( "fov" );
+
+	if ( gameLocal.IsCoop() ) {
+		// This entity's Think does not run on a client - it is not replicated -
+		// so hand every player the curve and let them evaluate it, host included.
+		gameLocal.SendCoopCampaignInfluenceFov( gameLocal.time, duration, startFov, endFov, false );
+		return;
+	}
+
+	fovSetting.Init( gameLocal.time, duration, startFov, endFov );
 	BecomeActive( TH_THINK );
 }
 
@@ -1458,7 +1513,13 @@ idTarget_SetFov::Think
 */
 void idTarget_SetFov::Think( void ) {
 	if ( thinkFlags & TH_THINK ) {
+		// Co-op never activates this think - every player evaluates the curve
+		// itself - and a dedicated server has no local player to drive.
 		idPlayer *player = gameLocal.GetLocalPlayer();
+		if ( !player ) {
+			BecomeInactive( TH_THINK );
+			return;
+		}
 		player->SetInfluenceFov( fovSetting.GetCurrentValue( gameLocal.time ) );
 		if ( fovSetting.IsDone( gameLocal.time ) ) {
 			player->SetInfluenceFov( 0.0f );

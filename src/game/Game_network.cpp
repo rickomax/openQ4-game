@@ -2188,6 +2188,40 @@ void idGameLocal::ClientProcessReliableMessage( int clientNum, const idBitMsg &m
 					ApplyCoopCampaignEntity( eventType, entitySpawnId );
 					break;
 				}
+				case COOP_CAMPAIGN_PAYLOAD_INFLUENCE: {
+					char material[ MAX_STRING_CHARS ] = { '\0' };
+					char skin[ MAX_STRING_CHARS ] = { '\0' };
+					coopInfluenceState_t influence;
+					influence.level = msg.ReadLong();
+					influence.setVision = msg.ReadBits( 1 ) != 0;
+					msg.ReadString( material, sizeof( material ) );
+					msg.ReadString( skin, sizeof( skin ) );
+					influence.visionMaterial = material;
+					influence.visionSkin = skin;
+					influence.visionRadius = msg.ReadFloat();
+					influence.visionEntitySpawnId = msg.ReadLong();
+					influence.snapAngle = msg.ReadBits( 1 ) != 0;
+					influence.snapYaw = msg.ReadFloat();
+					if ( eventType != COOP_CAMPAIGN_EVENT_INFLUENCE ) {
+						common->DPrintf( "ignoring unknown co-op campaign event %d\n", eventType );
+						break;
+					}
+					ApplyCoopCampaignInfluence( influence );
+					break;
+				}
+				case COOP_CAMPAIGN_PAYLOAD_INTERPOLATE: {
+					const int startTime = msg.ReadLong();
+					const int duration = msg.ReadLong();
+					const float startValue = msg.ReadFloat();
+					const float endValue = msg.ReadFloat();
+					const bool leaveOnDone = msg.ReadBits( 1 ) != 0;
+					if ( eventType != COOP_CAMPAIGN_EVENT_INFLUENCE_FOV ) {
+						common->DPrintf( "ignoring unknown co-op campaign event %d\n", eventType );
+						break;
+					}
+					ApplyCoopCampaignInfluenceFov( startTime, duration, startValue, endValue, leaveOnDone );
+					break;
+				}
 				default:
 					common->DPrintf( "ignoring co-op campaign event %d with unknown payload %d\n", eventType, payloadKind );
 					break;

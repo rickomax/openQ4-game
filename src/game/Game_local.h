@@ -297,6 +297,9 @@ typedef enum {
 	COOP_CAMPAIGN_EVENT_BOSS_SHIELD_WARN_BAR,	// show or hide the shield warning bar
 	COOP_CAMPAIGN_EVENT_BOSS_SHIELD_PERCENT,	// boss shield fill
 	COOP_CAMPAIGN_EVENT_BOSS_MAX_HEALTH,		// boss health bar scale
+	COOP_CAMPAIGN_EVENT_INFLUENCE,		// influence view, level and snap angle
+	COOP_CAMPAIGN_EVENT_INFLUENCE_FOV,	// influence fov curve
+	COOP_CAMPAIGN_EVENT_INFLUENCE_SOUND,	// influence flash sound
 	NUM_COOP_CAMPAIGN_EVENTS
 } coopCampaignEvent_t;
 
@@ -309,8 +312,25 @@ typedef enum {
 	COOP_CAMPAIGN_PAYLOAD_FADE,			// rgba colour plus duration in msec
 	COOP_CAMPAIGN_PAYLOAD_FLOAT,		// one float
 	COOP_CAMPAIGN_PAYLOAD_ENTITY,		// one packed entity spawn id
+	COOP_CAMPAIGN_PAYLOAD_INFLUENCE,	// the player-side half of an influence
+	COOP_CAMPAIGN_PAYLOAD_INTERPOLATE,	// a value curve the receiver evaluates itself
 	NUM_COOP_CAMPAIGN_PAYLOADS
 } coopCampaignPayload_t;
+
+// openQ4 co-op: the player-side half of an influence. Sent as one message
+// because idTarget_SetInfluence always sets and clears these together, and a
+// receiver that applied half of it would be left in a state no script asked
+// for. A cleared influence is this struct with level 0 and no vision material.
+typedef struct coopInfluenceState_s {
+	int						level;
+	bool					setVision;				// false leaves the current vision alone
+	idStr					visionMaterial;			// empty, with setVision, clears it
+	idStr					visionSkin;
+	float					visionRadius;
+	int						visionEntitySpawnId;	// influence source, 0 for none
+	bool					snapAngle;
+	float					snapYaw;
+} coopInfluenceState_t;
 
 enum {
 	GAME_UNRELIABLE_MESSAGE_EVENT,
@@ -1117,6 +1137,10 @@ public:
 	void					ApplyCoopCampaignFade( const idVec4 &fadeColor, int fadeTime );
 	void					ApplyCoopCampaignFloat( int eventType, float value );
 	void					ApplyCoopCampaignEntity( int eventType, int entitySpawnId );
+	void					SendCoopCampaignInfluence( const coopInfluenceState_t &state );
+	void					ApplyCoopCampaignInfluence( const coopInfluenceState_t &state );
+	void					SendCoopCampaignInfluenceFov( int startTime, int duration, float startValue, float endValue, bool leaveOnDone );
+	void					ApplyCoopCampaignInfluenceFov( int startTime, int duration, float startValue, float endValue, bool leaveOnDone );
 
 	// Campaign map scripts are held until a player exists to run them against.
 	void					QueueCoopMapScript( const function_t *func );

@@ -1986,6 +1986,8 @@ idPlayer::idPlayer() {
 	lastImpulseTime = gameLocal.time;
 
 	pendingBossSpawnId = 0;
+	coopInfluenceFovActive = false;
+	coopInfluenceFovLeaveOnDone = false;
 
 	weaponChangeIconsUp = false;
 
@@ -10950,7 +10952,12 @@ Called every tic for each player
 */
 void idPlayer::Think( void ) {
 	renderEntity_t *headRenderEnt;
- 
+
+	// co-op: advance an influence fov curve this player was handed. Harmless
+	// when there is none, and this is the only per-frame hook the server-side
+	// and single-player paths share.
+	UpdateCoopInfluenceFov();
+
 	if ( talkingNPC ) {
 		if ( !talkingNPC.IsValid() ) {
 			talkingNPC = NULL;
@@ -14277,6 +14284,10 @@ idPlayer::LocalClientPredictionThink
 void idPlayer::LocalClientPredictionThink( void ) {
 	renderEntity_t *headRenderEnt;
 
+	// co-op: a client's own player never reaches idPlayer::Think, so the
+	// influence fov curve is advanced here too.
+	UpdateCoopInfluenceFov();
+
 	oldFlags = usercmd.flags;
 	oldButtons = usercmd.buttons;
 
@@ -15699,6 +15710,46 @@ void idPlayer::StartBossBattle ( idEntity* enemy ) {
 	if ( hud_ ) {
 		hud_->SetStateInt ( "boss_maxhealth", enemy->health );
 		hud_->HandleNamedEvent ( "showBossBar" );
+	}
+}
+
+/*
+==============
+idPlayer::SetCoopInfluenceFov
+
+openQ4 co-op: idTarget_SetFov and idTarget_SetInfluence drive the influence fov
+from their own Think, which does not run on a client - client entities only
+think if they are in the snapshot, and these targets are not replicated. So the
+curve is sent once and each player evaluates it here.
+
+A duration of zero means the curve is already finished, which is how a script
+that sets an fov instantly reaches everybody.
+==============
+*/
+void idPlayer::SetCoopInfluenceFov ( int startTime, int duration, float startValue, float endValue, bool leaveOnDone ) {
+	coopInfluenceFov.Init( startTime, duration, startValue, endValue );
+	coopInfluenceFovActive = true;
+	coopInfluenceFovLeaveOnDone = leaveOnDone;
+	UpdateCoopInfluenceFov();
+}
+
+/*
+==============
+idPlayer::UpdateCoopInfluenceFov
+==============
+*/
+void idPlayer::UpdateCoopInfluenceFov ( void ) {
+	if ( !coopInfluenceFovActive ) {
+		return;
+	}
+
+	SetInfluenceFov( coopInfluenceFov.GetCurrentValue( gameLocal.time ) );
+
+	if ( coopInfluenceFov.IsDone( gameLocal.time ) ) {
+		if ( !coopInfluenceFovLeaveOnDone ) {
+			SetInfluenceFov( 0.0f );
+		}
+		coopInfluenceFovActive = false;
 	}
 }
 

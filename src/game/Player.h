@@ -584,6 +584,12 @@ public:
 	void					SetBossBattleTarget			( int entitySpawnId );
 	void					ResolvePendingBossBattle	( void );
 
+	// openQ4 co-op: the influence fov arrives as a curve rather than a value,
+	// because idTarget_SetFov and idTarget_SetInfluence drive it a frame at a
+	// time from a Think that does not run on a client. Each player evaluates it.
+	void					SetCoopInfluenceFov			( int startTime, int duration, float startValue, float endValue, bool leaveOnDone );
+	void					UpdateCoopInfluenceFov		( void );
+
 // jmarshall
 	const char*				GetNetName(void);
 	virtual bool			IsBot(void) { return false; }
@@ -1068,6 +1074,12 @@ private:
 
 	int						lastImpulseTime;		// time of last impulse
 	idEntityPtr<idEntity>	bossEnemy;
+	// co-op: influence fov curve this player is evaluating. Like the held boss
+	// id below, deliberately not archived - co-op clients do not save.
+	idInterpolate<float>	coopInfluenceFov;
+	bool					coopInfluenceFovActive;
+	bool					coopInfluenceFovLeaveOnDone;
+
 	// co-op: boss named by script, awaiting its snapshot. Deliberately not
 	// archived: it is only ever non-zero for the moment between the message and
 	// the entity arriving on a co-op client, and co-op clients do not save.

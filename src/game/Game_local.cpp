@@ -9199,6 +9199,15 @@ void idGameLocal::ApplyCoopCampaignEvent( int eventType, const char *arg0, const
 			player->HideTip();
 			break;
 
+		case COOP_CAMPAIGN_EVENT_INFLUENCE_SOUND:
+			if ( arg0 && arg0[ 0 ] ) {
+				const idSoundShader *shader = declManager->FindSound( arg0 );
+				if ( shader ) {
+					player->StartSoundShader( shader, SND_CHANNEL_VOICE, 0, false, NULL );
+				}
+			}
+			break;
+
 		default:
 			Warning( "ApplyCoopCampaignEvent: unknown campaign event %d", eventType );
 			break;
@@ -9340,6 +9349,133 @@ void idGameLocal::ApplyCoopCampaignEntity( int eventType, int entitySpawnId ) {
 			Warning( "ApplyCoopCampaignEntity: unknown campaign event %d", eventType );
 			break;
 	}
+}
+
+/*
+===========
+idGameLocal::SendCoopCampaignInfluence
+
+An influence rewrites what a player sees - a fullscreen vision material, a skin,
+a view level, sometimes a forced facing. All of it lives on the player's own
+machine, so it is sent rather than written to a remote player's entity here.
+===========
+*/
+void idGameLocal::SendCoopCampaignInfluence( const coopInfluenceState_t &state ) {
+	if ( isClient ) {
+		return;
+	}
+
+	if ( IsCoop() && isServer ) {
+		idBitMsg	outMsg;
+		byte		msgBuf[ MAX_GAME_MESSAGE_SIZE ];
+
+		outMsg.Init( msgBuf, sizeof( msgBuf ) );
+		outMsg.BeginWriting();
+		outMsg.WriteByte( GAME_RELIABLE_MESSAGE_COOP_CAMPAIGN_EVENT );
+		outMsg.WriteByte( COOP_CAMPAIGN_EVENT_INFLUENCE );
+		outMsg.WriteByte( COOP_CAMPAIGN_PAYLOAD_INFLUENCE );
+		outMsg.WriteLong( state.level );
+		outMsg.WriteBits( state.setVision ? 1 : 0, 1 );
+		outMsg.WriteString( state.visionMaterial.c_str() );
+		outMsg.WriteString( state.visionSkin.c_str() );
+		outMsg.WriteFloat( state.visionRadius );
+		outMsg.WriteLong( state.visionEntitySpawnId );
+		outMsg.WriteBits( state.snapAngle ? 1 : 0, 1 );
+		outMsg.WriteFloat( state.snapYaw );
+		networkSystem->ServerSendReliableMessage( -1, outMsg );
+	}
+
+	ApplyCoopCampaignInfluence( state );
+}
+
+/*
+===========
+idGameLocal::ApplyCoopCampaignInfluence
+===========
+*/
+void idGameLocal::ApplyCoopCampaignInfluence( const coopInfluenceState_t &state ) {
+	idPlayer *player = GetLocalPlayer();
+	if ( player == NULL ) {
+		return;
+	}
+
+	player->SetInfluenceLevel( state.level );
+
+	if ( state.snapAngle ) {
+		idAngles ang( 0.0f, state.snapYaw, 0.0f );
+		player->SetViewAngles( ang );
+		player->SetAngles( ang );
+	}
+
+	// An influence that does not ask for a vision effect leaves whatever is
+	// already on screen alone, exactly as idTarget_SetInfluence did.
+	if ( !state.setVision ) {
+		return;
+	}
+
+	if ( state.visionMaterial.Length() ) {
+		// The influence source is used for the vision radius falloff. It is a map
+		// entity, so it exists on every client under the same number, but resolve
+		// it by spawn id anyway rather than trusting the number alone.
+		idEntity *source = NULL;
+		if ( state.visionEntitySpawnId != 0 ) {
+			const int entityNum = state.visionEntitySpawnId & ( ( 1 << GENTITYNUM_BITS ) - 1 );
+			if ( spawnIds[ entityNum ] == ( state.visionEntitySpawnId >> GENTITYNUM_BITS ) ) {
+				source = entities[ entityNum ];
+			}
+		}
+		player->SetInfluenceView( state.visionMaterial.c_str(), state.visionSkin.c_str(), state.visionRadius, source );
+	} else {
+		player->SetInfluenceView( NULL, NULL, 0.0f, NULL );
+	}
+}
+
+/*
+===========
+idGameLocal::SendCoopCampaignInfluenceFov
+
+The influence fov is a curve, not a value: idTarget_SetFov and
+idTarget_SetInfluence both drive it a frame at a time from their own Think. Send
+the curve once and let every player evaluate it, the same way the boss health
+bar is recomputed locally rather than streamed.
+===========
+*/
+void idGameLocal::SendCoopCampaignInfluenceFov( int startTime, int duration, float startValue, float endValue, bool leaveOnDone ) {
+	if ( isClient ) {
+		return;
+	}
+
+	if ( IsCoop() && isServer ) {
+		idBitMsg	outMsg;
+		byte		msgBuf[ MAX_GAME_MESSAGE_SIZE ];
+
+		outMsg.Init( msgBuf, sizeof( msgBuf ) );
+		outMsg.BeginWriting();
+		outMsg.WriteByte( GAME_RELIABLE_MESSAGE_COOP_CAMPAIGN_EVENT );
+		outMsg.WriteByte( COOP_CAMPAIGN_EVENT_INFLUENCE_FOV );
+		outMsg.WriteByte( COOP_CAMPAIGN_PAYLOAD_INTERPOLATE );
+		outMsg.WriteLong( startTime );
+		outMsg.WriteLong( duration );
+		outMsg.WriteFloat( startValue );
+		outMsg.WriteFloat( endValue );
+		outMsg.WriteBits( leaveOnDone ? 1 : 0, 1 );
+		networkSystem->ServerSendReliableMessage( -1, outMsg );
+	}
+
+	ApplyCoopCampaignInfluenceFov( startTime, duration, startValue, endValue, leaveOnDone );
+}
+
+/*
+===========
+idGameLocal::ApplyCoopCampaignInfluenceFov
+===========
+*/
+void idGameLocal::ApplyCoopCampaignInfluenceFov( int startTime, int duration, float startValue, float endValue, bool leaveOnDone ) {
+	idPlayer *player = GetLocalPlayer();
+	if ( player == NULL ) {
+		return;
+	}
+	player->SetCoopInfluenceFov( startTime, duration, startValue, endValue, leaveOnDone );
 }
 
 /*
