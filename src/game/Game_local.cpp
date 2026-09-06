@@ -4957,8 +4957,10 @@ TIME_THIS_SCOPE("idGameLocal::RunFrame - gameDebug.BeginFrame()");
 			s_openq4AirDefense1SkipProbe.totalBseEndMs += probeBseEndMs;
 		}
 
-		// do multiplayer related stuff
-		if ( isMultiplayer ) {
+		// do multiplayer related stuff. Co-op is networked but has no match to
+		// run - no warmup, no scoring, no round flow - so it takes the same
+		// path single-player does and leaves idMultiplayerGame idle.
+		if ( IsMatchGameType() ) {
 			// Keep bot level-item/entity links current for item goals in DM/MP modes.
 			if ( isServer && botItemTable && registeredBots.Num() > 0 ) {
 				botGoalManager.UpdateEntityItems();
@@ -5227,7 +5229,9 @@ bool idGameLocal::Draw( int clientNum ) {
 //	DisplayClipProfile( );
 //	ClearClipProfile( );
 
-	if ( isMultiplayer ) {
+	// Co-op draws the campaign view and HUD like single-player; the multiplayer
+	// scoreboard and match overlays have nothing to show for it.
+	if ( IsMatchGameType() ) {
 		const bool drawn = mpGame.Draw( clientNum );
 		if ( drawn ) {
 			CheckAutoExecAfterMapLoad();
@@ -8778,6 +8782,35 @@ void idGameLocal::InitializeSpawns( void ) {
 
 	spawnSpots.Clear();
 
+	// Co-op runs campaign maps, which are authored with a single
+	// info_player_start and none of the deathmatch or team spawns the loop below
+	// collects. Gather the campaign starts instead - plus any info_player_coop a
+	// map or mod chooses to author - so the multiplayer "map must have a spawn
+	// spot" error cannot fire on a perfectly valid campaign map.
+	if ( IsCoop() ) {
+		for( int i = 0; i < TEAM_MAX; i++ ) {
+			teamSpawnSpots[i].Clear();
+		}
+
+		static const char *coopSpawnDefs[] = { "info_player_coop", "info_player_start" };
+		for ( int defIndex = 0; defIndex < 2; defIndex++ ) {
+			spot = FindEntityUsingDef( NULL, coopSpawnDefs[ defIndex ] );
+			while( spot ) {
+				if( spot->IsType( idPlayerStart::GetClassType() ) ) {
+					spawnSpots.Append( static_cast<idPlayerStart*>(spot) );
+				}
+				spot = FindEntityUsingDef( spot, coopSpawnDefs[ defIndex ] );
+			}
+		}
+
+		if( spawnSpots.Num() == 0 ) {
+			Error( "InitializeSpawns() - Co-op map must have an info_player_start or info_player_coop." );
+		}
+
+		common->Printf( "%d co-op spawns\n", spawnSpots.Num() );
+		return;
+	}
+
 	for( int i = 0; i < TEAM_MAX; i++ ) {
 		teamSpawnSpots[i].Clear();
 	}
@@ -8898,6 +8931,22 @@ idEntity* idGameLocal::SelectSpawnPoint( idPlayer* player ) {
 		return ent;
 	}
 
+	// Co-op hands out the campaign starts InitializeSpawns collected. Campaign
+	// maps almost always have exactly one, so players share a spot and
+	// idPlayer::SelectSpawnPoint spreads them apart around it; a map that
+	// authors several info_player_coop entities gets one each, round-robin.
+	if( IsCoop() ) {
+		if( spawnSpots.Num() == 0 ) {
+			idEntity* ent = FindEntityUsingDef( NULL, "info_player_start" );
+			if ( !ent ) {
+				Error( "No info_player_start on map.\n" );
+			}
+			return ent;
+		}
+		const int slot = ( player != NULL ) ? ( player->entityNumber % spawnSpots.Num() ) : 0;
+		return spawnSpots[ slot ];
+	}
+
 	if ( player == NULL ) {
 		return NULL;
 	}
@@ -8967,6 +9016,70 @@ idEntity* idGameLocal::SelectSpawnPoint( idPlayer* player ) {
 	return weightedSpawns[ rnd ].ent;
 }
 /*
+===========
+idGameLocal::FindCoopSpawnPosition
+
+Campaign maps carry a single info_player_start, so every co-op player is sent to
+the same spot. Walk a widening ring around it for a position the player fits in
+and can reach in a straight line from the spot itself, so nobody spawns inside a
+team-mate, inside geometry, or on the far side of a wall.
+
+Returns true and updates origin when it found somewhere better; returns false and
+leaves origin untouched when it did not, in which case the players simply push
+each other apart as they would after any overlapping spawn.
+===========
+*/
+bool idGameLocal::FindCoopSpawnPosition( idPlayer* player, idVec3 &origin ) {
+	if ( player == NULL ) {
+		return false;
+	}
+
+	idClipModel *clipModel = player->GetPhysics()->GetClipModel();
+	if ( clipModel == NULL ) {
+		return false;
+	}
+
+	const int instance = player->GetInstance();
+	if ( instance < 0 || instance >= clip.Num() || clip[ instance ] == NULL ) {
+		return false;
+	}
+	idClip *playerClip = clip[ instance ];
+
+	// The spot itself is free - nothing to do.
+	if ( !playerClip->Contents( origin, clipModel, mat3_identity, MASK_PLAYERSOLID, player ) ) {
+		return true;
+	}
+
+	static const float	ringRadius[] = { 48.0f, 80.0f, 112.0f, 144.0f };
+	static const int	numRings = sizeof( ringRadius ) / sizeof( ringRadius[ 0 ] );
+	static const int	numSteps = 8;
+
+	for ( int ring = 0; ring < numRings; ring++ ) {
+		for ( int step = 0; step < numSteps; step++ ) {
+			const float yaw = ( 360.0f / numSteps ) * step;
+			idVec3 offset( idMath::Cos( DEG2RAD( yaw ) ), idMath::Sin( DEG2RAD( yaw ) ), 0.0f );
+			const idVec3 candidate = origin + offset * ringRadius[ ring ];
+
+			if ( playerClip->Contents( candidate, clipModel, mat3_identity, MASK_PLAYERSOLID, player ) ) {
+				continue;
+			}
+
+			// Reject anywhere that is only free because it is through a wall.
+			trace_t reach;
+			playerClip->Translation( reach, origin, candidate, clipModel, mat3_identity, MASK_PLAYERSOLID, player );
+			if ( reach.fraction < 1.0f ) {
+				continue;
+			}
+
+			origin = candidate;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/*
 ================
 idGameLocal::UpdateServerInfoFlags
 ================
@@ -8976,6 +9089,15 @@ idGameLocal::UpdateServerInfoFlags
 void idGameLocal::SetGameType( void ) {
 	idStr gameTypeName = serverInfo.GetString("si_gameType");
 	gameType = GAME_SP;
+
+	// openQ4 co-op: campaign content served to several clients. It never reaches
+	// idMultiplayerGame::SetGameType, which would both fail to find a match
+	// gametype named "Coop" and overwrite si_entityFilter with the gametype name
+	// - campaign maps need the filter the map was built with.
+	if ( !gameTypeName.Icmp( "Coop" ) ) {
+		gameType = GAME_COOP;
+		return;
+	}
 
 	if ( gameTypeName != "singleplayer") {
 		mpGame.SetGameType();

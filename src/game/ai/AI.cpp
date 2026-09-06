@@ -1043,6 +1043,14 @@ void idAI::Spawn( void ) {
 
 	Begin ( );
 
+	// openQ4 co-op: campaign AI has to reach the other players' machines. In
+	// single-player there is nobody to send it to, and a multiplayer match
+	// spawns no AI at all, so this is the one mode that marks monsters for
+	// replication.
+	if ( gameLocal.IsCoop() ) {
+		fl.networkSync = true;
+	}
+
 	// RAVEN BEGIN
 	// twhitaker: needed this for difficulty settings
 	PostEventMS( &EV_PostSpawn, 0 );
@@ -5438,4 +5446,65 @@ bool idAI::CheckDeathCausesMissionFailure( void )
 		}
 	}
 	return false;
+}
+
+/*
+================
+idAI::WriteToSnapshot
+
+openQ4 co-op: the campaign AI - tactical reasoning, pathing, scripted actions -
+runs on the server alone. Clients receive presentation state: where the monster
+is, which way it faces, what its channels are playing, and whether it is still
+alive and solid. Everything else stays server-side, so a client can never
+disagree with the server about what a monster is doing.
+
+Nothing here executes outside co-op: idAI carries no networkSync flag in
+single-player, and a multiplayer match has no AI to send.
+================
+*/
+void idAI::WriteToSnapshot( idBitMsgDelta &msg ) const {
+	physicsObj.WriteToSnapshot( msg );
+	WriteBindToSnapshot( msg );
+	WriteActorAnimToSnapshot( msg );
+
+	// idPhysics_Monster replicates the origin but not the facing, and an AI's
+	// facing is the whole read on what it is about to do.
+	msg.WriteFloat( viewAxis.ToAngles().yaw );
+
+	msg.WriteShort( health );
+	msg.WriteBits( fl.takedamage ? 1 : 0, 1 );
+	msg.WriteBits( IsHidden() ? 1 : 0, 1 );
+}
+
+/*
+================
+idAI::ReadFromSnapshot
+================
+*/
+void idAI::ReadFromSnapshot( const idBitMsgDelta &msg ) {
+	physicsObj.ReadFromSnapshot( msg );
+	ReadBindFromSnapshot( msg );
+	ReadActorAnimFromSnapshot( msg );
+
+	const float yaw = msg.ReadFloat();
+	viewAxis = idAngles( 0.0f, yaw, 0.0f ).ToMat3();
+
+	const int newHealth = msg.ReadShort();
+	const bool takeDamage = msg.ReadBits( 1 ) != 0;
+	const bool hidden = msg.ReadBits( 1 ) != 0;
+
+	health = newHealth;
+	fl.takedamage = takeDamage;
+
+	if ( hidden != IsHidden() ) {
+		if ( hidden ) {
+			Hide();
+		} else {
+			Show();
+		}
+	}
+
+	if ( msg.HasChanged() ) {
+		UpdateVisuals();
+	}
 }

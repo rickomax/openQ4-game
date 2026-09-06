@@ -113,6 +113,11 @@ public:
 	int						channel;
 };
 
+// openQ4 co-op: width of the per-channel animation index sent in an actor
+// snapshot. Model defs stay far below 4096 animations, and the value is range
+// checked against the receiving client's own animator before it is played.
+const int ACTOR_ANIM_NUM_BITS = 12;
+
 class idActor : public idAFEntity_Gibbable {
 public:
 	CLASS_PROTOTYPE( idActor );
@@ -415,6 +420,12 @@ protected:
 	void					DisableAnimState		( int channel );
 	void					EnableAnimState			( int channel );
 	idAnimState&			GetAnimState			( int channel );
+
+	// openQ4 co-op: campaign actors are server-authoritative, so a client is
+	// given the animation each channel is playing rather than the anim-state
+	// machine that chose it. See idAI::WriteToSnapshot.
+	void					WriteActorAnimToSnapshot( idBitMsgDelta &msg ) const;
+	void					ReadActorAnimFromSnapshot( const idBitMsgDelta &msg );
 };
 
 ID_INLINE bool idActor::IsInVehicle( void ) const {

@@ -3953,3 +3953,77 @@ void idActor::GuidedProjectileIncoming( idGuidedProjectile *projectile )
 	}
 }
 // RAVEN END
+
+/*
+================
+idActor::WriteActorAnimToSnapshot
+
+openQ4 co-op: campaign AI runs only on the server, so a client is never told
+which anim state a monster is in - it is told which animation each channel is
+actually playing, and plays the same one. Sending the animation number plus its
+start time keeps a late-joining or briefly-lagged client in phase with the
+server instead of restarting every animation from frame zero.
+================
+*/
+void idActor::WriteActorAnimToSnapshot( idBitMsgDelta &msg ) const {
+	// CurrentAnim() is a non-const accessor on an otherwise read-only walk.
+	idAnimator &anim = const_cast<idAnimator &>( animator );
+
+	static const int channels[] = { ANIMCHANNEL_TORSO, ANIMCHANNEL_LEGS, ANIMCHANNEL_HEAD };
+	static const int numChannels = sizeof( channels ) / sizeof( channels[ 0 ] );
+
+	for ( int i = 0; i < numChannels; i++ ) {
+		const idAnimBlend *blend = anim.CurrentAnim( channels[ i ] );
+		const int animNum = ( blend != NULL ) ? blend->AnimNum() : 0;
+
+		msg.WriteBits( animNum, ACTOR_ANIM_NUM_BITS );
+		if ( animNum > 0 ) {
+			msg.WriteLong( blend->GetStartTime() );
+		}
+	}
+}
+
+/*
+================
+idActor::ReadActorAnimFromSnapshot
+================
+*/
+void idActor::ReadActorAnimFromSnapshot( const idBitMsgDelta &msg ) {
+	static const int channels[] = { ANIMCHANNEL_TORSO, ANIMCHANNEL_LEGS, ANIMCHANNEL_HEAD };
+	static const int numChannels = sizeof( channels ) / sizeof( channels[ 0 ] );
+
+	for ( int i = 0; i < numChannels; i++ ) {
+		const int channel = channels[ i ];
+		const int animNum = msg.ReadBits( ACTOR_ANIM_NUM_BITS );
+
+		if ( animNum <= 0 ) {
+			continue;
+		}
+
+		const int startTime = msg.ReadLong();
+
+		// Only restart the channel when the server actually changed animation.
+		// Re-playing the same one every snapshot would reset it to frame zero
+		// several times a second.
+		const idAnimBlend *blend = animator.CurrentAnim( channel );
+		if ( blend != NULL && blend->AnimNum() == animNum ) {
+			continue;
+		}
+
+		if ( animNum >= animator.NumAnims() ) {
+			// The client's model def does not have this animation. Nothing sane
+			// to play, and PlayAnim would assert on the index.
+			continue;
+		}
+
+		animator.PlayAnim( channel, animNum, gameLocal.time, 0 );
+
+		// Put the animation where the server has it rather than at its first
+		// frame, so a monster that started its attack before this snapshot does
+		// not visibly rewind.
+		idAnimBlend *played = animator.CurrentAnim( channel );
+		if ( played != NULL && startTime < gameLocal.time ) {
+			played->SetStartTime( startTime );
+		}
+	}
+}

@@ -3647,6 +3647,12 @@ bool idPlayer::SelectSpawnPoint( idVec3 &origin, idAngles &angles ) {
 	origin[2] += 4.0f + CM_BOX_EPSILON;		// move up to make sure the player is at least an epsilon above the floor
 	angles = spot->GetPhysics()->GetAxis().ToAngles();
 
+	// Campaign maps have one start, so co-op players are all sent to it. Step
+	// aside to a free spot nearby rather than spawning inside a team-mate.
+	if ( gameLocal.IsCoop() ) {
+		gameLocal.FindCoopSpawnPosition( this, origin );
+	}
+
 	return true;
 }
 

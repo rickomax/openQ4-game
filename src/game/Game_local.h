@@ -1053,6 +1053,19 @@ public:
 	virtual const char*		GetLongGametypeName( const char* gametype );
 	virtual void			ReceiveRemoteConsoleOutput( const char* output );
 
+	// openQ4 co-op: a co-op session is networked (isMultiplayer is true, the
+	// snapshot and reliable-message paths all run) but it plays campaign content
+	// under game_sp, so none of the multiplayer match rules in idMultiplayerGame
+	// apply to it. Ask IsCoop() before reaching for mpGame.
+	bool					IsCoop( void ) const { return gameType == GAME_COOP; }
+	// True for the two modes that run campaign maps, scripting and AI: plain
+	// single-player and co-op.
+	bool					IsCampaignGameType( void ) const { return gameType == GAME_SP || gameType == GAME_COOP; }
+	// True when idMultiplayerGame owns the match: every networked mode but co-op.
+	bool					IsMatchGameType( void ) const { return isMultiplayer && !IsCoop(); }
+	// Spreads co-op players around a shared campaign spawn spot.
+	bool					FindCoopSpawnPosition( idPlayer* player, idVec3 &origin );
+
 	bool					IsFlagGameType( void ) { return ( gameType == GAME_CTF || gameType == GAME_1F_CTF || gameType == GAME_ARENA_CTF || gameType == GAME_ARENA_1F_CTF ); }
 	bool					IsTeamGameType( void ) { return ( gameType == GAME_TDM || gameType == GAME_CTF || gameType == GAME_ARENA_CTF || gameType == GAME_DEADZONE ); }
 	bool					IsTeamPowerups( void );

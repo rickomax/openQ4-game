@@ -36,8 +36,14 @@ typedef enum {
 // RITUAL BEGIN
 // squirrel: added DeadZone multiplayer mode
 	GAME_DEADZONE,
-	NUM_GAME_TYPES,
 // RITUAL END
+
+	// openQ4: co-operative campaign play. Appended last so every existing
+	// gametype keeps the ordinal it already sends over the wire and stores in
+	// demos and savegames.
+	GAME_COOP,
+
+	NUM_GAME_TYPES,
 } gameType_t;
 
 

@@ -443,6 +443,11 @@ public:
 	void					Spawn							( void );
 	virtual void			TalkTo							( idActor *actor );
 
+	// openQ4 co-op: campaign AI is simulated on the server only. These replicate
+	// enough for a client to present the monster; the client runs no AI logic.
+	virtual void			WriteToSnapshot					( idBitMsgDelta &msg ) const;
+	virtual void			ReadFromSnapshot				( const idBitMsgDelta &msg );
+
 	idEntity*				GetEnemy						( void ) const;
  	idEntity*				GetGoalEntity					( void ) const;
 	talkState_t				GetTalkState					( void ) const;
