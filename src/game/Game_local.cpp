@@ -9207,6 +9207,143 @@ void idGameLocal::ApplyCoopCampaignEvent( int eventType, const char *arg0, const
 
 /*
 ===========
+idGameLocal::SendCoopCampaignFloat
+
+Boss shield fill, bar visibility and health-bar scale: single script-authored
+numbers that live in each player's own HUD.
+===========
+*/
+void idGameLocal::SendCoopCampaignFloat( int eventType, float value ) {
+	if ( isClient ) {
+		return;
+	}
+
+	if ( IsCoop() && isServer ) {
+		idBitMsg	outMsg;
+		byte		msgBuf[ MAX_GAME_MESSAGE_SIZE ];
+
+		outMsg.Init( msgBuf, sizeof( msgBuf ) );
+		outMsg.BeginWriting();
+		outMsg.WriteByte( GAME_RELIABLE_MESSAGE_COOP_CAMPAIGN_EVENT );
+		outMsg.WriteByte( eventType );
+		outMsg.WriteByte( COOP_CAMPAIGN_PAYLOAD_FLOAT );
+		outMsg.WriteFloat( value );
+		networkSystem->ServerSendReliableMessage( -1, outMsg );
+	}
+
+	ApplyCoopCampaignFloat( eventType, value );
+}
+
+/*
+===========
+idGameLocal::SendCoopCampaignEntity
+
+Sends an entity a campaign effect is about, as a packed spawn id so the receiver
+can tell the entity apart from a later one that reuses its number.
+===========
+*/
+void idGameLocal::SendCoopCampaignEntity( int eventType, const idEntity *ent ) {
+	if ( isClient ) {
+		return;
+	}
+
+	const int entitySpawnId = ( ent != NULL )
+		? PackEntitySpawnId( spawnIds[ ent->entityNumber ], ent->entityNumber )
+		: 0;
+
+	if ( IsCoop() && isServer ) {
+		idBitMsg	outMsg;
+		byte		msgBuf[ MAX_GAME_MESSAGE_SIZE ];
+
+		outMsg.Init( msgBuf, sizeof( msgBuf ) );
+		outMsg.BeginWriting();
+		outMsg.WriteByte( GAME_RELIABLE_MESSAGE_COOP_CAMPAIGN_EVENT );
+		outMsg.WriteByte( eventType );
+		outMsg.WriteByte( COOP_CAMPAIGN_PAYLOAD_ENTITY );
+		outMsg.WriteLong( entitySpawnId );
+		networkSystem->ServerSendReliableMessage( -1, outMsg );
+	}
+
+	ApplyCoopCampaignEntity( eventType, entitySpawnId );
+}
+
+/*
+===========
+idGameLocal::ApplyCoopCampaignFloat
+===========
+*/
+void idGameLocal::ApplyCoopCampaignFloat( int eventType, float value ) {
+	idPlayer *player = GetLocalPlayer();
+	if ( player == NULL ) {
+		return;
+	}
+
+	idUserInterface *hud = player->GetHud();
+	if ( hud == NULL ) {
+		return;
+	}
+
+	switch ( eventType ) {
+		case COOP_CAMPAIGN_EVENT_BOSS_SHIELD_BAR:
+			if ( value ) {
+				hud->HandleNamedEvent( "showBossShieldBar" );
+				hud->HandleNamedEvent( "updateBossShield" );
+			} else {
+				hud->HandleNamedEvent( "hideBossShieldBar" );
+			}
+			break;
+
+		case COOP_CAMPAIGN_EVENT_BOSS_SHIELD_WARN_BAR:
+			if ( value ) {
+				hud->HandleNamedEvent( "showBossShieldWarn" );
+				hud->HandleNamedEvent( "updateBossShield" );
+			} else {
+				hud->HandleNamedEvent( "hideBossShieldWarn" );
+			}
+			break;
+
+		case COOP_CAMPAIGN_EVENT_BOSS_SHIELD_PERCENT:
+			hud->SetStateFloat( "boss_shield_percent", value );
+			hud->HandleNamedEvent( "updateBossShield" );
+			break;
+
+		case COOP_CAMPAIGN_EVENT_BOSS_MAX_HEALTH:
+			hud->SetStateInt( "boss_maxhealth", value );
+			break;
+
+		default:
+			Warning( "ApplyCoopCampaignFloat: unknown campaign event %d", eventType );
+			break;
+	}
+}
+
+/*
+===========
+idGameLocal::ApplyCoopCampaignEntity
+===========
+*/
+void idGameLocal::ApplyCoopCampaignEntity( int eventType, int entitySpawnId ) {
+	idPlayer *player = GetLocalPlayer();
+	if ( player == NULL ) {
+		return;
+	}
+
+	switch ( eventType ) {
+		case COOP_CAMPAIGN_EVENT_BOSS_START:
+			// The boss entity may not have reached this client yet: reliable
+			// messages and snapshots are separate streams. idPlayer holds the id
+			// and resolves it when the entity turns up.
+			player->SetBossBattleTarget( entitySpawnId );
+			break;
+
+		default:
+			Warning( "ApplyCoopCampaignEntity: unknown campaign event %d", eventType );
+			break;
+	}
+}
+
+/*
+===========
 idGameLocal::QueueCoopMapScript
 
 idWorldspawn::Spawn starts a campaign map's script threads on the frame after

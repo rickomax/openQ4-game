@@ -1575,10 +1575,12 @@ rvTarget_BossBattle::Event_Activate
 ================
 */
 void rvTarget_BossBattle::Event_Activate( idEntity *activator ) {
-	idPlayer* player = gameLocal.GetLocalPlayer();
-	idEntity* enemy  = gameLocal.FindEntity ( spawnArgs.GetString ( "target" ) );
-	if ( player && enemy ) { 
-		player->StartBossBattle ( enemy );
+	idEntity* enemy = gameLocal.FindEntity ( spawnArgs.GetString ( "target" ) );
+	if ( enemy ) {
+		// Everyone fights the boss, so everyone gets the bar. Only the boss's
+		// identity is sent: each client's HUD already reads its health every
+		// frame from the entity, which co-op replicates.
+		gameLocal.SendCoopCampaignEntity( COOP_CAMPAIGN_EVENT_BOSS_START, enemy );
 	}
 	
 	StartSound ( "snd_activate", SND_CHANNEL_ANY, 0, false, NULL );
@@ -1592,16 +1594,7 @@ rvTarget_BossBattle::Event_AllowShieldBar
 */
 void rvTarget_BossBattle::Event_AllowShieldBar( float activate )
 {
-	idUserInterface *hud = gameLocal.GetLocalPlayer()->GetHud();
-	if ( hud ) 
-	{
-		if( activate )	{
-			hud->HandleNamedEvent( "showBossShieldBar" );
-			hud->HandleNamedEvent( "updateBossShield" );
-		} else {
-			hud->HandleNamedEvent( "hideBossShieldBar" );
-		}
-	}
+	gameLocal.SendCoopCampaignFloat( COOP_CAMPAIGN_EVENT_BOSS_SHIELD_BAR, activate );
 }
 
 /*
@@ -1611,16 +1604,7 @@ rvTarget_BossBattle::Event_AllowShieldWarningBar
 */
 void rvTarget_BossBattle::Event_AllowShieldWarningBar( float activate )
 {
-	idUserInterface *hud = gameLocal.GetLocalPlayer()->GetHud();
-	if ( hud ) 
-	{
-		if( activate )	{
-			hud->HandleNamedEvent( "showBossShieldWarn" );
-			hud->HandleNamedEvent( "updateBossShield" );
-		} else {
-			hud->HandleNamedEvent( "hideBossShieldWarn" );
-		}
-	}
+	gameLocal.SendCoopCampaignFloat( COOP_CAMPAIGN_EVENT_BOSS_SHIELD_WARN_BAR, activate );
 }
 
 /*
@@ -1629,13 +1613,7 @@ rvTarget_BossBattle::Event_SetShieldPercent
 ================
 */
 void rvTarget_BossBattle::Event_SetShieldPercent( float percent ) {
-
-	idUserInterface *hud = gameLocal.GetLocalPlayer()->GetHud();
-	if ( hud ) 
-	{
-		hud->SetStateFloat( "boss_shield_percent", percent );
-		hud->HandleNamedEvent( "updateBossShield" );
-	}
+	gameLocal.SendCoopCampaignFloat( COOP_CAMPAIGN_EVENT_BOSS_SHIELD_PERCENT, percent );
 }
 
 /*
@@ -1644,13 +1622,7 @@ rvTarget_BossBattle::Event_SetMaxBossHealth
 ================
 */
 void rvTarget_BossBattle::Event_SetBossMaxHealth( float f ) {
-
-	idUserInterface *hud = gameLocal.GetLocalPlayer()->GetHud();
-	if ( hud ) 
-	{
-
-		hud->SetStateInt ( "boss_maxhealth",f );
-	}
+	gameLocal.SendCoopCampaignFloat( COOP_CAMPAIGN_EVENT_BOSS_MAX_HEALTH, f );
 }
 
 /*

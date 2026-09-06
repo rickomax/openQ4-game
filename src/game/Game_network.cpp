@@ -2170,6 +2170,24 @@ void idGameLocal::ClientProcessReliableMessage( int clientNum, const idBitMsg &m
 					ApplyCoopCampaignFade( fadeColor, fadeTime );
 					break;
 				}
+				case COOP_CAMPAIGN_PAYLOAD_FLOAT: {
+					const float value = msg.ReadFloat();
+					if ( eventType < 0 || eventType >= NUM_COOP_CAMPAIGN_EVENTS ) {
+						common->DPrintf( "ignoring unknown co-op campaign event %d\n", eventType );
+						break;
+					}
+					ApplyCoopCampaignFloat( eventType, value );
+					break;
+				}
+				case COOP_CAMPAIGN_PAYLOAD_ENTITY: {
+					const int entitySpawnId = msg.ReadLong();
+					if ( eventType < 0 || eventType >= NUM_COOP_CAMPAIGN_EVENTS ) {
+						common->DPrintf( "ignoring unknown co-op campaign event %d\n", eventType );
+						break;
+					}
+					ApplyCoopCampaignEntity( eventType, entitySpawnId );
+					break;
+				}
 				default:
 					common->DPrintf( "ignoring co-op campaign event %d with unknown payload %d\n", eventType, payloadKind );
 					break;

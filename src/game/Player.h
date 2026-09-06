@@ -578,6 +578,11 @@ public:
 	void					DiscoverSecretArea			( const char *description);
 	
 	void					StartBossBattle				( idEntity* ent );
+	// openQ4 co-op: a boss battle announced by script names an entity that may
+	// not have reached this client yet, because reliable messages and snapshots
+	// are separate streams. Hold the id and resolve it when the entity arrives.
+	void					SetBossBattleTarget			( int entitySpawnId );
+	void					ResolvePendingBossBattle	( void );
 
 // jmarshall
 	const char*				GetNetName(void);
@@ -1063,6 +1068,11 @@ private:
 
 	int						lastImpulseTime;		// time of last impulse
 	idEntityPtr<idEntity>	bossEnemy;
+	// co-op: boss named by script, awaiting its snapshot. Deliberately not
+	// archived: it is only ever non-zero for the moment between the message and
+	// the entity arriving on a co-op client, and co-op clients do not save.
+	// Adding it would change the savegame format for no gain.
+	int						pendingBossSpawnId;
 
 	const idDeclEntityDef*	cachedWeaponDefs[ MAX_WEAPONS ];
 	const idDeclEntityDef*	cachedPowerupDefs[ POWERUP_MAX ];

@@ -292,6 +292,11 @@ typedef enum {
 	COOP_CAMPAIGN_EVENT_TIP,			// show an on-screen tip
 	COOP_CAMPAIGN_EVENT_TIP_OFF,		// hide the on-screen tip
 	COOP_CAMPAIGN_EVENT_FADE,			// screen fade driven by a script
+	COOP_CAMPAIGN_EVENT_BOSS_START,		// boss battle begins against an entity
+	COOP_CAMPAIGN_EVENT_BOSS_SHIELD_BAR,		// show or hide the boss shield bar
+	COOP_CAMPAIGN_EVENT_BOSS_SHIELD_WARN_BAR,	// show or hide the shield warning bar
+	COOP_CAMPAIGN_EVENT_BOSS_SHIELD_PERCENT,	// boss shield fill
+	COOP_CAMPAIGN_EVENT_BOSS_MAX_HEALTH,		// boss health bar scale
 	NUM_COOP_CAMPAIGN_EVENTS
 } coopCampaignEvent_t;
 
@@ -302,6 +307,8 @@ typedef enum {
 typedef enum {
 	COOP_CAMPAIGN_PAYLOAD_STRINGS,		// two strings
 	COOP_CAMPAIGN_PAYLOAD_FADE,			// rgba colour plus duration in msec
+	COOP_CAMPAIGN_PAYLOAD_FLOAT,		// one float
+	COOP_CAMPAIGN_PAYLOAD_ENTITY,		// one packed entity spawn id
 	NUM_COOP_CAMPAIGN_PAYLOADS
 } coopCampaignPayload_t;
 
@@ -1104,8 +1111,12 @@ public:
 	idPlayer *				GetCampaignActivator( idEntity *activator ) const;
 	void					SendCoopCampaignEvent( int eventType, const char *arg0 = NULL, const char *arg1 = NULL );
 	void					SendCoopCampaignFade( const idVec4 &fadeColor, int fadeTime );
+	void					SendCoopCampaignFloat( int eventType, float value );
+	void					SendCoopCampaignEntity( int eventType, const idEntity *ent );
 	void					ApplyCoopCampaignEvent( int eventType, const char *arg0, const char *arg1 );
 	void					ApplyCoopCampaignFade( const idVec4 &fadeColor, int fadeTime );
+	void					ApplyCoopCampaignFloat( int eventType, float value );
+	void					ApplyCoopCampaignEntity( int eventType, int entitySpawnId );
 
 	// Campaign map scripts are held until a player exists to run them against.
 	void					QueueCoopMapScript( const function_t *func );

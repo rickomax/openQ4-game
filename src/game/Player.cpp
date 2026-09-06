@@ -1985,6 +1985,8 @@ idPlayer::idPlayer() {
 	lastImpulsePlayer = NULL;
 	lastImpulseTime = gameLocal.time;
 
+	pendingBossSpawnId = 0;
+
 	weaponChangeIconsUp = false;
 
 	reloadModel = false;
@@ -4364,7 +4366,10 @@ void idPlayer::UpdateHudStats( idUserInterface *_hud ) {
 		_hud->HandleNamedEvent ( "updateArmor" );
 	}
 	
-	// Boss bar
+	// Boss bar. In co-op the battle may have been announced before the boss
+	// entity reached this client; pick it up as soon as it is here.
+	ResolvePendingBossBattle();
+
 	if ( _hud->State().GetInt ( "boss_health", "-1" ) != (bossEnemy ? bossEnemy->health : -1) ) {
 		if ( !bossEnemy || bossEnemy->health <= 0 ) {
 			bossEnemy = NULL;
@@ -15689,11 +15694,60 @@ will be displayed on the HUD
 */
 void idPlayer::StartBossBattle ( idEntity* enemy ) {
 	bossEnemy = enemy;
+	pendingBossSpawnId = 0;
 	idUserInterface *hud_ = GetHud();
 	if ( hud_ ) {
 		hud_->SetStateInt ( "boss_maxhealth", enemy->health );
 		hud_->HandleNamedEvent ( "showBossBar" );
 	}
+}
+
+/*
+==============
+idPlayer::SetBossBattleTarget
+
+openQ4 co-op: the boss battle is announced over a reliable message, which can
+outrun the snapshot that spawns the boss on this client. Remember which entity
+it is and start the battle as soon as that entity exists.
+==============
+*/
+void idPlayer::SetBossBattleTarget ( int entitySpawnId ) {
+	if ( entitySpawnId == 0 ) {
+		pendingBossSpawnId = 0;
+		return;
+	}
+
+	pendingBossSpawnId = entitySpawnId;
+	ResolvePendingBossBattle();
+}
+
+/*
+==============
+idPlayer::ResolvePendingBossBattle
+
+Starts a held boss battle once its entity has arrived. Until then bossEnemy
+stays unset, which leaves the HUD exactly as it was - the bar simply appears
+when the boss does.
+==============
+*/
+void idPlayer::ResolvePendingBossBattle ( void ) {
+	if ( pendingBossSpawnId == 0 ) {
+		return;
+	}
+
+	const int entityNum = pendingBossSpawnId & ( ( 1 << GENTITYNUM_BITS ) - 1 );
+	if ( gameLocal.spawnIds[ entityNum ] != ( pendingBossSpawnId >> GENTITYNUM_BITS ) ) {
+		// Not here yet. Try again next frame.
+		return;
+	}
+
+	idEntity *enemy = gameLocal.entities[ entityNum ];
+	if ( enemy == NULL ) {
+		return;
+	}
+
+	// Clears pendingBossSpawnId itself.
+	StartBossBattle( enemy );
 }
 
 /*
