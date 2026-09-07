@@ -33,6 +33,7 @@
 
 # Meson/Ninja build trees
 builddir*/
+cmake-build*/
 meson-private/
 meson-logs/
 meson-info/
