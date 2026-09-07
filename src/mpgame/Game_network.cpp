@@ -1786,6 +1786,32 @@ void idGameLocal::RepeaterProcessReliableMessage( int clientNum, const idBitMsg 
 
 /*
 ================
+idGameLocal::GetPlayerFromWireClientNum
+
+Resolves a network-supplied client number to a player, or NULL.
+
+Without this a caller static_casts whatever entity happens to occupy that slot
+to idPlayer* - an arbitrary world entity for any value at or above MAX_CLIENTS -
+and then reads player fields off an object that has none. Its entityNumber
+reaches the MAX_CLIENTS-sized per-client arrays out of bounds, which is a read
+far past the end of userInfo for a value a hostile server picks.
+================
+*/
+idPlayer *idGameLocal::GetPlayerFromWireClientNum( int wireClientNum ) {
+	if ( !IsValidWireClientNum( wireClientNum ) ) {
+		return NULL;
+	}
+
+	idEntity *ent = entities[ wireClientNum ];
+	if ( ent == NULL || !ent->IsType( idPlayer::GetClassType() ) ) {
+		return NULL;
+	}
+
+	return static_cast<idPlayer *>( ent );
+}
+
+/*
+================
 idGameLocal::ClientShowSnapshot
 ================
 */
@@ -2744,6 +2770,11 @@ void idGameLocal::ClientProcessReliableMessage( int clientNum, const idBitMsg &m
 			char voteString[ MAX_STRING_CHARS ];
 			int clientNum = msg.ReadByte( );
 			msg.ReadString( voteString, sizeof( voteString ) );
+			// ClientStartVote names the caller with userInfo[ clientNum ].
+			if ( !IsValidWireClientNum( clientNum ) ) {
+				common->Warning( "Ignoring vote from invalid client %d", clientNum );
+				break;
+			}
 			mpGame.ClientStartVote( clientNum, voteString );
 			break;
 		}
@@ -2800,6 +2831,17 @@ void idGameLocal::ClientProcessReliableMessage( int clientNum, const idBitMsg &m
 			}
 			if ( msg.GetRemainingReadBits() != 0 ) {
 				Warning( "Ignoring packed vote state with %d trailing bits", msg.GetRemainingReadBits() );
+				break;
+			}
+			// ClientStartPackedVote names the caller with userInfo[ clientNum ], and
+			// a kick vote names its target with userInfo[ m_kick ]. Both are raw
+			// wire bytes and both index an array sized MAX_CLIENTS.
+			if ( !IsValidWireClientNum( clientNum ) ) {
+				common->Warning( "Ignoring packed vote from invalid client %d", clientNum );
+				break;
+			}
+			if ( ( voteData.m_fieldFlags & VOTEFLAG_KICK ) != 0 && !IsValidWireClientNum( voteData.m_kick ) ) {
+				common->Warning( "Ignoring packed kick vote against invalid client %d", voteData.m_kick );
 				break;
 			}
 			mpGame.ClientStartPackedVote( clientNum, voteData );
@@ -2889,8 +2931,11 @@ void idGameLocal::ClientProcessReliableMessage( int clientNum, const idBitMsg &m
 				victimScore = msg.ReadBits( ASYNC_PLAYER_FRAG_BITS );
 			}
 
-			idPlayer* attacker = (attackerEntityNumber != 255 ? static_cast<idPlayer*>(gameLocal.entities[ attackerEntityNumber ]) : NULL);
-			idPlayer* victim = (victimEntityNumber != 255 ? static_cast<idPlayer*>(gameLocal.entities[ victimEntityNumber ]) : NULL);
+			// Both numbers are raw wire bytes. 255 was the only value rejected, so
+			// anything from MAX_CLIENTS to 254 named an ordinary world entity that
+			// was then cast to idPlayer* and read as one.
+			idPlayer* attacker = GetPlayerFromWireClientNum( attackerEntityNumber );
+			idPlayer* victim = GetPlayerFromWireClientNum( victimEntityNumber );
 			int methodOfDeath = msg.ReadByte( );
 			bool quadKill = msg.ReadBits( 1 ) != 0;
 		

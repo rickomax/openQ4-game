@@ -989,6 +989,14 @@ public:
 	int						GetClientNumByName( const char *name ) const;
 
 	idPlayer *				GetLocalPlayer() const;
+
+	// A client number that arrived over the network is attacker controlled: it is
+	// a raw byte, so it can name any slot in the entities array rather than only
+	// a client slot. Use these before indexing anything sized MAX_CLIENTS - the
+	// per-client arrays such as userInfo are far smaller than the entities array
+	// an unchecked wire byte can reach into.
+	static bool				IsValidWireClientNum( int wireClientNum ) { return wireClientNum >= 0 && wireClientNum < MAX_CLIENTS; }
+	idPlayer *				GetPlayerFromWireClientNum( int wireClientNum );
 	
 // RAVEN BEGIN
 // jshepard: update player data after main menu close
