@@ -289,7 +289,15 @@ elseif(GAMELIBS_LINUX)
 endif()
 
 function(gamelibs_add_module target_name module_name idlib_target sources)
-  add_library(${target_name} MODULE ${sources})
+  # SHARED, not MODULE, on Darwin. CMake builds a MODULE there as an MH_BUNDLE
+  # with -undefined dynamic_lookup, which carries no LC_ID_DYLIB for
+  # -install_name to land in and drops the undefined-symbol closure the other
+  # hosts get. meson makes the same distinction for the same reason.
+  if(GAMELIBS_DARWIN)
+    add_library(${target_name} SHARED ${sources})
+  else()
+    add_library(${target_name} MODULE ${sources})
+  endif()
   target_link_libraries(${target_name} PRIVATE ${idlib_target})
   target_include_directories(${target_name} PRIVATE "${SOURCE_ROOT}" "${GENERATED_INCLUDE_DIR}")
   target_compile_options(${target_name} PRIVATE ${COMMON_CXX_FLAGS} ${FORCED_INCLUDE_FLAGS})
